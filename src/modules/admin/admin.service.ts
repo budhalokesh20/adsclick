@@ -1,7 +1,7 @@
 import { Prisma, type UserStatus } from '@prisma/client';
 import { prisma } from '../../database/prisma.js';
 import { badRequest, conflict, notFound } from '../../utils/errors.js';
-import { hashPassword } from '../../utils/passwords.js';
+import { hashPassword, verifyPassword } from '../../utils/passwords.js';
 import { toDecimal } from '../../services/finance/decimal.js';
 import { generateReferralCode } from '../../utils/referral.js';
 import type { Decimal } from 'decimal.js';
@@ -156,6 +156,35 @@ const COUNTRIES: Array<{ code: string; name: string }> = [
 
 export function listCountries(): Array<{ code: string; name: string }> {
   return COUNTRIES;
+}
+
+export async function updateAdminProfile(adminId: string, input: { name?: string; email?: string }) {
+  const existing = await prisma.adminUser.findUnique({ where: { id: adminId } });
+  if (!existing) throw notFound('Admin not found');
+  try {
+    return await prisma.adminUser.update({
+      where: { id: adminId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.email !== undefined ? { email: input.email.toLowerCase() } : {}),
+      },
+      select: { id: true, email: true, name: true, status: true },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      throw conflict('EMAIL_TAKEN', 'An admin with this email already exists');
+    }
+    throw err;
+  }
+}
+
+export async function changeAdminPassword(adminId: string, currentPassword: string, newPassword: string) {
+  const admin = await prisma.adminUser.findUnique({ where: { id: adminId }, select: { passwordHash: true } });
+  if (!admin) throw notFound('Admin not found');
+  const ok = await verifyPassword(admin.passwordHash, currentPassword);
+  if (!ok) throw badRequest('INVALID_CURRENT_PASSWORD', 'Current password is incorrect');
+  await prisma.adminUser.update({ where: { id: adminId }, data: { passwordHash: await hashPassword(newPassword) } });
+  return { ok: true };
 }
 
 export async function listPayoutMethods() {

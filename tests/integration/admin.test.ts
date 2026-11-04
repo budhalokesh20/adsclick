@@ -106,6 +106,31 @@ describe('admin API', () => {
     expect(me.body.roles).toContain('SUPER_ADMIN');
   });
 
+  it('admin can update own profile and change password', async () => {
+    const profile = await request(app)
+      .patch('/api/v1/admin/auth/me')
+      .set(auth(superToken))
+      .send({ name: 'Boss Admin', email: 'boss@admin.test' });
+    expect(profile.status).toBe(200);
+    expect(profile.body.name).toBe('Boss Admin');
+
+    // old password still valid? change it
+    const pw = await request(app)
+      .patch('/api/v1/admin/auth/password')
+      .set(auth(superToken))
+      .send({ currentPassword: password, newPassword: 'NewPass123!' });
+    expect(pw.status).toBe(204);
+
+    const loginNew = await request(app).post('/api/v1/admin/auth/login').send({ email: 'boss@admin.test', password: 'NewPass123!' });
+    expect(loginNew.status).toBe(200);
+
+    // revert password for other tests
+    await request(app)
+      .patch('/api/v1/admin/auth/password')
+      .set(auth(loginNew.body.accessToken))
+      .send({ currentPassword: 'NewPass123!', newPassword: password });
+  });
+
   it('RBAC: analyst can read overview/users but not write settings', async () => {
     const overview = await request(app).get('/api/v1/admin/overview').set(auth(analystToken));
     expect(overview.status).toBe(200);

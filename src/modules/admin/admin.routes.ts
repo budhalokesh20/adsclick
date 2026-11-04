@@ -18,6 +18,8 @@ const body = (schema: z.ZodTypeAny) => validate({ body: schema });
 // Auth (no role required; login verifies active admin)
 adminRouter.post('/auth/login', body(z.object({ email: z.string().email(), password: z.string().min(1) })), adminController.login);
 adminRouter.get('/auth/me', adminAuth, adminController.me);
+adminRouter.patch('/auth/me', adminAuth, adminController.updateOwnProfile);
+adminRouter.patch('/auth/password', adminAuth, adminController.changeOwnPassword);
 
 // Overview — analytics read
 adminRouter.get('/overview', requireAdmin(['analytics.read']), adminController.overview);

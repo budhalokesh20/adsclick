@@ -6,6 +6,7 @@ import { hashPassword } from '../../utils/passwords.js';
 import { audit } from './audit.js';
 import {
   adminAdjustment,
+  changeAdminPassword,
   createCampaign,
   createPayoutMethod,
   createProvider,
@@ -13,14 +14,15 @@ import {
   financeSummary,
   getUserDetail,
   listCampaigns,
+  listCountries,
   listPayoutMethods,
   listProviders,
   listUsers,
   overviewKpis,
   reconciliation,
-  listCountries,
   removePayoutMethod,
   setUserStatus,
+  updateAdminProfile,
   updateCampaign,
   updatePayoutMethod,
   updateProvider,
@@ -40,6 +42,26 @@ export const adminController = {
 
   async me(req: Request, res: Response): Promise<void> {
     res.json(req.admin);
+  },
+
+  async updateOwnProfile(req: Request, res: Response): Promise<void> {
+    const body = z.object({
+      name: z.string().trim().min(1).max(120).optional(),
+      email: z.string().email().max(254).optional(),
+    }).parse(req.body);
+    const result = await updateAdminProfile(req.admin!.adminId, body);
+    await audit(req, 'admins.profile', 'admin_users', req.admin!.adminId, null, body);
+    res.json(result);
+  },
+
+  async changeOwnPassword(req: Request, res: Response): Promise<void> {
+    const body = z.object({
+      currentPassword: z.string().min(1).max(72),
+      newPassword: z.string().min(8).max(72),
+    }).parse(req.body);
+    await changeAdminPassword(req.admin!.adminId, body.currentPassword, body.newPassword);
+    await audit(req, 'admins.password', 'admin_users', req.admin!.adminId, null, {});
+    res.status(204).send();
   },
 
   async overview(_req: Request, res: Response): Promise<void> {
