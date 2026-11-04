@@ -1,0 +1,735 @@
+// AdShare database schema — see docs/02-database.md for the design rationale.
+// Conventions: UUID PKs, snake_case tables, NUMERIC(20,6) money, timestamptz.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum EarningStatus {
+  DISABLED
+  ENABLING
+  ACTIVE
+  PAUSED
+  RESTRICTED
+  ERROR
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  RESTRICTED
+  CLOSED
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+}
+
+enum DeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum ProviderStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ENDED
+}
+
+enum PayoutType {
+  CPM
+  CPA
+  CPC
+}
+
+enum EventType {
+  IMPRESSION
+  ENGAGEMENT
+  REVENUE
+  REJECTED
+  DUPLICATE
+}
+
+enum ValidationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum SettlementStatus {
+  PENDING
+  ALLOCATED
+  REVERSED
+}
+
+enum RevenueType {
+  PROVIDER_REVENUE
+  REVERSAL
+}
+
+enum RevenueStatus {
+  RECEIVED
+  COMMITTED
+  REVERSED
+}
+
+enum TxnType {
+  AD_REWARD
+  REFERRAL_REWARD
+  WITHDRAWAL_HOLD
+  WITHDRAWAL_PAYOUT
+  WITHDRAWAL_REJECTION
+  ADJUSTMENT
+  REVERSAL
+}
+
+enum TxnDirection {
+  CREDIT
+  DEBIT
+}
+
+enum TxnStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  VOIDED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  PROCESSING
+  PAID
+  REJECTED
+}
+
+enum PaymentMethodType {
+  MOCK
+  BANK
+  PAYPAL
+  CRYPTO
+}
+
+enum MethodStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ReferralRelStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum ReferralRewardType {
+  SIGNUP_BONUS
+  FIRST_VERIFIED_IMPRESSION
+}
+
+enum RewardStatus {
+  PENDING
+  PAID
+  VOIDED
+}
+
+enum NotificationType {
+  EARNING
+  WALLET
+  WITHDRAWAL
+  REFERRAL
+  SYSTEM
+}
+
+enum AdminUserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ActorType {
+  USER
+  ADMIN
+  SYSTEM
+}
+
+enum FraudSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FraudStatus {
+  OPEN
+  REVIEWED
+  RESOLVED
+}
+
+enum SettingValueType {
+  NUMBER
+  STRING
+  BOOLEAN
+  JSON
+}
+
+// ---------------------------------------------------------------------------
+// Identity & access
+// ---------------------------------------------------------------------------
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique @db.Citext
+  passwordHash      String    @map("password_hash")
+  status            UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt   DateTime? @map("email_verified_at") @db.Timestamptz
+  lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz
+  lastIp            String?   @map("last_ip")
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  profile        UserProfile?
+  devices        Device[]
+  sessions       UserSession[]
+  wallet         Wallet?
+  referralCodes  ReferralCode[]
+  referredBy     ReferralRelationship[] @relation("Referrer")
+  referralsGiven ReferralRelationship[] @relation("Referred")
+  notifications  Notification[]
+  fraudEvents    FraudEvent[]
+  withdrawalRequests WithdrawalRequest[]
+  paymentMethods PaymentMethod[]
+  advertisementEvents AdvertisementEvent[]
+  verifiedImpressions VerifiedImpression[]
+  revenueAllocations RevenueAllocation[]
+  walletTransactions WalletTransaction[]
+  earningState   UserEarningState?
+
+  @@map("users")
+}
+
+model UserProfile {
+  id               String  @id @default(uuid()) @db.Uuid
+  userId           String  @unique @map("user_id") @db.Uuid
+  fullName         String? @map("full_name")
+  avatarUrl        String? @map("avatar_url")
+  countryCode      String? @map("country_code") @db.Char(2)
+  locale           String?
+  notificationPrefs Json   @default("{\"earnings\":true,\"withdrawals\":true,\"marketing\":false}") @map("notification_prefs") @db.JsonB
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model Device {
+  id               String       @id @default(uuid()) @db.Uuid
+  userId           String       @map("user_id") @db.Uuid
+  externalDeviceId String       @map("external_device_id")
+  platform         DevicePlatform
+  model            String?
+  osVersion        String?      @map("os_version")
+  appVersion       String?      @map("app_version")
+  pushToken        String?      @map("push_token")
+  lastSeenAt       DateTime?    @map("last_seen_at") @db.Timestamptz
+  status           DeviceStatus  @default(ACTIVE)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions UserSession[]
+  advertisementEvents AdvertisementEvent[]
+
+  @@unique([userId, externalDeviceId])
+  @@map("devices")
+}
+
+model UserSession {
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  deviceId           String?   @map("device_id") @db.Uuid
+  refreshTokenHash   String    @unique @map("refresh_token_hash")
+  ipAddress          String?   @map("ip_address")
+  userAgent          String?   @map("user_agent")
+  expiresAt          DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz
+  replacedBySessionId String?  @unique @map("replaced_by_session_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device      Device?       @relation(fields: [deviceId], references: [id])
+  replacedBy  UserSession?  @relation("RotationLineage", fields: [replacedBySessionId], references: [id])
+  replaced    UserSession?  @relation("RotationLineage")
+
+  @@index([userId, revokedAt])
+  @@map("user_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Earning
+// ---------------------------------------------------------------------------
+
+model UserEarningState {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @unique @map("user_id") @db.Uuid
+  status    EarningStatus @default(DISABLED)
+  enabledAt DateTime?     @map("enabled_at") @db.Timestamptz
+  pausedAt  DateTime?     @map("paused_at") @db.Timestamptz
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_earning_states")
+}
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+model AdminUser {
+  id           String          @id @default(uuid()) @db.Uuid
+  email        String          @unique @db.Citext
+  passwordHash String          @map("password_hash")
+  name         String
+  status       AdminUserStatus  @default(ACTIVE)
+  lastLoginAt  DateTime?       @map("last_login_at") @db.Timestamptz
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  roles AdminUserRole[]
+  auditLogs AuditLog[]
+  reviewedWithdrawals WithdrawalRequest[]
+  settingsChanged SystemSetting[]
+  resolvedFraud FraudEvent[]
+
+  @@map("admin_users")
+}
+
+model AdminRole {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  name        String
+  permissions Json     @db.JsonB // string[]
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  users AdminUserRole[]
+
+  @@map("admin_roles")
+}
+
+model AdminUserRole {
+  id          String    @id @default(uuid()) @db.Uuid
+  adminUserId String    @map("admin_user_id") @db.Uuid
+  adminRoleId String    @map("admin_role_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  adminRole AdminRole @relation(fields: [adminRoleId], references: [id], onDelete: Cascade)
+
+  @@unique([adminUserId, adminRoleId])
+  @@map("admin_user_roles")
+}
+
+model AuditLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  actorType  ActorType @map("actor_type")
+  actorId    String?   @map("actor_id") @db.Uuid
+  action     String
+  entityType String?   @map("entity_type")
+  entityId   String?   @map("entity_id") @db.Uuid
+  before     Json?     @db.JsonB
+  after      Json?     @db.JsonB
+  metadata   Json?     @db.JsonB
+  ipAddress  String?   @map("ip_address")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  admin AdminUser? @relation(fields: [actorId], references: [id])
+
+  @@index([actorType, actorId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  id             String           @id @default(uuid()) @db.Uuid
+  key            String           @unique
+  value          Json             @db.JsonB
+  valueType      SettingValueType  @map("value_type")
+  isPublic       Boolean          @default(false) @map("is_public")
+  updatedByAdminId String?        @map("updated_by_admin_id") @db.Uuid
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  updatedBy AdminUser? @relation(fields: [updatedByAdminId], references: [id])
+
+  @@map("system_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Advertising
+// ---------------------------------------------------------------------------
+
+model AdvertisingProvider {
+  id                String         @id @default(uuid()) @db.Uuid
+  code              String         @unique
+  name              String
+  status            ProviderStatus  @default(ACTIVE)
+  callbackSecretEnc String?        @map("callback_secret_enc")
+  config            Json           @default("{}") @db.JsonB
+  sandbox           Boolean        @default(true)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  campaigns AdvertisingCampaign[]
+  events AdvertisementEvent[]
+  revenueEvents RevenueEvent[]
+
+  @@map("advertising_providers")
+}
+
+model AdvertisingCampaign {
+  id                String       @id @default(uuid()) @db.Uuid
+  providerId        String       @map("provider_id") @db.Uuid
+  externalCampaignId String      @map("external_campaign_id")
+  name              String
+  status            CampaignStatus @default(DRAFT)
+  payoutType        PayoutType   @map("payout_type")
+  payoutAmount      Decimal      @map("payout_amount") @db.Decimal(20, 6)
+  currency          String       @default("USD") @db.Char(3)
+  eventFilters      Json?        @map("event_filters") @db.JsonB
+  startsAt          DateTime?    @map("starts_at") @db.Timestamptz
+  endsAt            DateTime?    @map("ends_at") @db.Timestamptz
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  provider AdvertisingProvider @relation(fields: [providerId], references: [id])
+  events AdvertisementEvent[]
+  impressions VerifiedImpression[]
+  revenueEvents RevenueEvent[]
+
+  @@unique([providerId, externalCampaignId])
+  @@map("advertising_campaigns")
+}
+
+model AdvertisementEvent {
+  id                String          @id @default(uuid()) @db.Uuid
+  eventUuid         String          @unique @map("event_uuid") @db.Uuid
+  providerId        String          @map("provider_id") @db.Uuid
+  campaignId        String?         @map("campaign_id") @db.Uuid
+  advertisementExternalId String?    @map("advertisement_external_id")
+  userId            String?         @map("user_id") @db.Uuid
+  deviceId          String?         @map("device_id") @db.Uuid
+  eventType         EventType       @map("event_type")
+  eventKey          String          @unique @map("event_key")
+  rawPayload        Json            @map("raw_payload") @db.JsonB
+  receivedAt        DateTime        @default(now()) @map("received_at") @db.Timestamptz
+  processedAt       DateTime?       @map("processed_at") @db.Timestamptz
+  validationStatus  ValidationStatus @default(PENDING) @map("validation_status")
+  rejectionReason   String?         @map("rejection_reason")
+  providerReference String?         @map("provider_reference")
+  riskScore         Decimal?        @map("risk_score") @db.Decimal(5, 2)
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  provider AdvertisingProvider @relation(fields: [providerId], references: [id])
+  campaign AdvertisingCampaign? @relation(fields: [campaignId], references: [id])
+  user User? @relation(fields: [userId], references: [id])
+  device Device? @relation(fields: [deviceId], references: [id])
+  verifiedImpression VerifiedImpression?
+
+  @@index([userId, createdAt])
+  @@index([validationStatus, processedAt])
+  @@map("advertisement_events")
+}
+
+model VerifiedImpression {
+  id              String           @id @default(uuid()) @db.Uuid
+  eventId         String           @unique @map("event_id") @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  campaignId      String           @map("campaign_id") @db.Uuid
+  impressionAt    DateTime         @map("impression_at") @db.Timestamptz
+  revenueGross    Decimal          @default(0) @map("revenue_gross") @db.Decimal(20, 6)
+  currency        String           @default("USD") @db.Char(3)
+  settlementStatus SettlementStatus @default(PENDING) @map("settlement_status")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  event AdvertisementEvent @relation(fields: [eventId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+  campaign AdvertisingCampaign @relation(fields: [campaignId], references: [id])
+  allocation RevenueAllocation?
+  revenueEvent RevenueEvent?
+
+  @@map("verified_impressions")
+}
+
+model RevenueEvent {
+  id                String       @id @default(uuid()) @db.Uuid
+  providerId        String       @map("provider_id") @db.Uuid
+  campaignId        String       @map("campaign_id") @db.Uuid
+  verifiedImpressionId String?   @unique @map("verified_impression_id") @db.Uuid
+  type              RevenueType
+  grossAmount       Decimal      @map("gross_amount") @db.Decimal(20, 6)
+  currency          String       @default("USD") @db.Char(3)
+  status            RevenueStatus @default(RECEIVED)
+  recognizedAt      DateTime     @map("recognized_at") @db.Timestamptz
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  provider AdvertisingProvider @relation(fields: [providerId], references: [id])
+  campaign AdvertisingCampaign @relation(fields: [campaignId], references: [id])
+  verifiedImpression VerifiedImpression? @relation(fields: [verifiedImpressionId], references: [id])
+  allocation RevenueAllocation?
+
+  @@map("revenue_events")
+}
+
+// ---------------------------------------------------------------------------
+// Wallet & ledger
+// ---------------------------------------------------------------------------
+
+model Wallet {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @map("user_id") @db.Uuid
+  balanceAvailable Decimal  @default(0) @map("balance_available") @db.Decimal(20, 6)
+  balancePending  Decimal  @default(0) @map("balance_pending") @db.Decimal(20, 6)
+  lifetimeEarned  Decimal  @default(0) @map("lifetime_earned") @db.Decimal(20, 6)
+  totalWithdrawn  Decimal  @default(0) @map("total_withdrawn") @db.Decimal(20, 6)
+  currency        String   @default("USD") @db.Char(3)
+  version         Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id                   String     @id @default(uuid()) @db.Uuid
+  walletId             String     @map("wallet_id") @db.Uuid
+  userId               String     @map("user_id") @db.Uuid
+  txnType              TxnType   @map("txn_type")
+  direction            TxnDirection
+  amount               Decimal    @db.Decimal(20, 6)
+  currency             String     @default("USD") @db.Char(3)
+  status               TxnStatus  @default(COMPLETED)
+  balanceAfterAvailable Decimal   @map("balance_after_available") @db.Decimal(20, 6)
+  balanceAfterPending  Decimal    @map("balance_after_pending") @db.Decimal(20, 6)
+  referenceType        String?    @map("reference_type")
+  referenceId          String?    @map("reference_id") @db.Uuid
+  idempotencyKey      String?    @unique @map("idempotency_key")
+  description          String?
+  createdBy            String?    @map("created_by")
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  reconciledAt         DateTime?  @map("reconciled_at") @db.Timestamptz
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+  withdrawalHolds WithdrawalRequest[] @relation("WithdrawalHold")
+  withdrawalPayouts WithdrawalRequest[] @relation("WithdrawalPayout")
+
+  @@index([walletId, createdAt])
+  @@index([userId, createdAt])
+  @@map("wallet_transactions")
+}
+
+model RevenueAllocation {
+  id                   String    @id @default(uuid()) @db.Uuid
+  verifiedImpressionId String    @unique @map("verified_impression_id") @db.Uuid
+  revenueEventId       String?   @unique @map("revenue_event_id") @db.Uuid
+  userId               String    @map("user_id") @db.Uuid
+  grossRevenue         Decimal   @map("gross_revenue") @db.Decimal(20, 6)
+  userSharePct         Decimal   @map("user_share_pct") @db.Decimal(5, 2)
+  platformSharePct     Decimal   @map("platform_share_pct") @db.Decimal(5, 2)
+  userAmount           Decimal   @map("user_amount") @db.Decimal(20, 6)
+  platformAmount       Decimal   @map("platform_amount") @db.Decimal(20, 6)
+  currency             String    @default("USD") @db.Char(3)
+  status               SettlementStatus @default(PENDING)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  committedAt          DateTime? @map("committed_at") @db.Timestamptz
+
+  verifiedImpression VerifiedImpression @relation(fields: [verifiedImpressionId], references: [id])
+  revenueEvent RevenueEvent? @relation(fields: [revenueEventId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("revenue_allocations")
+}
+
+// ---------------------------------------------------------------------------
+// Withdrawals & payouts
+// ---------------------------------------------------------------------------
+
+model PayoutMethod {
+  id             String   @id @default(uuid()) @db.Uuid
+  code           String   @unique
+  name           String
+  logoUrl        String?   @map("logo_url")
+  minPayout      Decimal   @default(0) @map("min_payout") @db.Decimal(20, 6)
+  feeAmount      Decimal   @default(0) @map("fee_amount") @db.Decimal(20, 6)
+  taxPct        Decimal   @default(0) @map("tax_pct") @db.Decimal(5, 2)
+  allowedCountries Json    @default("[]") @map("allowed_countries") @db.JsonB
+  status         String   @default("ACTIVE")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("payout_methods")
+}
+
+model PaymentMethod {
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  providerType PaymentMethodType @map("provider_type")
+  label       String?
+  accountDetailsEnc String      @map("account_details_enc")
+  status      MethodStatus      @default(ACTIVE)
+  isDefault   Boolean           @default(false) @map("is_default")
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  withdrawals WithdrawalRequest[]
+
+  @@map("payment_methods")
+}
+
+model WithdrawalRequest {
+  id              String          @id @default(uuid()) @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  amount          Decimal         @db.Decimal(20, 6)
+  currency        String          @default("USD") @db.Char(3)
+  paymentMethodId String?         @map("payment_method_id") @db.Uuid
+  status          WithdrawalStatus @default(PENDING)
+  feeAmount       Decimal         @default(0) @map("fee_amount") @db.Decimal(20, 6)
+  netAmount       Decimal         @default(0) @map("net_amount") @db.Decimal(20, 6)
+  holdTxnId       String?         @map("hold_txn_id") @db.Uuid
+  payoutTxnId     String?         @map("payout_txn_id") @db.Uuid
+  reviewNote      String?         @map("review_note")
+  reviewedByAdminId String?       @map("reviewed_by_admin_id") @db.Uuid
+  riskFlags       Json?           @map("risk_flags") @db.JsonB
+  requestedAt     DateTime        @default(now()) @map("requested_at") @db.Timestamptz
+  reviewedAt      DateTime?       @map("reviewed_at") @db.Timestamptz
+  processedAt     DateTime?       @map("processed_at") @db.Timestamptz
+  paidAt          DateTime?       @map("paid_at") @db.Timestamptz
+  rejectedAt      DateTime?       @map("rejected_at") @db.Timestamptz
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+  paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  reviewedBy AdminUser? @relation(fields: [reviewedByAdminId], references: [id])
+  holdTxn WalletTransaction? @relation("WithdrawalHold", fields: [holdTxnId], references: [id], map: "withdrawal_requests_hold_txn_fkey")
+  payoutTxn WalletTransaction? @relation("WithdrawalPayout", fields: [payoutTxnId], references: [id], map: "withdrawal_requests_payout_txn_fkey")
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@map("withdrawal_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Referrals
+// ---------------------------------------------------------------------------
+
+model ReferralCode {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  code      String   @unique
+  status    String   @default("ACTIVE") // ACTIVE | INACTIVE (kept as text for v1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("referral_codes")
+}
+
+model ReferralRelationship {
+  id            String            @id @default(uuid()) @db.Uuid
+  referrerUserId String            @map("referrer_user_id") @db.Uuid
+  referredUserId String            @unique @map("referred_user_id") @db.Uuid
+  codeUsed      String            @map("code_used")
+  status        ReferralRelStatus @default(PENDING)
+  confirmedAt   DateTime?         @map("confirmed_at") @db.Timestamptz
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  referrer User @relation("Referrer", fields: [referrerUserId], references: [id])
+  referred User @relation("Referred", fields: [referredUserId], references: [id])
+  rewards  ReferralReward[]
+
+  @@unique([referrerUserId, referredUserId])
+  @@map("referral_relationships")
+}
+
+model ReferralReward {
+  id          String              @id @default(uuid()) @db.Uuid
+  relationshipId String            @map("relationship_id") @db.Uuid
+  rewardType  ReferralRewardType  @map("reward_type")
+  amount      Decimal             @db.Decimal(20, 6)
+  currency    String              @default("USD") @db.Char(3)
+  status      RewardStatus         @default(PENDING)
+  walletTxnId String?             @map("wallet_txn_id") @db.Uuid
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  paidAt      DateTime?           @map("paid_at") @db.Timestamptz
+
+  relationship ReferralRelationship @relation(fields: [relationshipId], references: [id])
+
+  @@unique([relationshipId, rewardType])
+  @@map("referral_rewards")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications & fraud
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?            @db.JsonB
+  readAt    DateTime?        @map("read_at") @db.Timestamptz
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model FraudEvent {
+  id               String      @id @default(uuid()) @db.Uuid
+  userId           String?     @map("user_id") @db.Uuid
+  ruleCode         String      @map("rule_code")
+  severity         FraudSeverity
+  details          Json        @db.JsonB
+  status           FraudStatus  @default(OPEN)
+  resolvedByAdminId String?    @map("resolved_by_admin_id") @db.Uuid
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  resolvedAt       DateTime?   @map("resolved_at") @db.Timestamptz
+
+  user User? @relation(fields: [userId], references: [id])
+  resolvedBy AdminUser? @relation(fields: [resolvedByAdminId], references: [id])
+
+  @@index([status, createdAt])
+  @@map("fraud_events")
+}
