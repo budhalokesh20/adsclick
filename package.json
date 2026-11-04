@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
+    "db:migrate:server": "sh scripts/migrate.sh",
     "db:makemigration": "prisma migrate dev --create-only",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",

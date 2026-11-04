@@ -1,0 +1,51 @@
+# Render Blueprint — AdShare API (backend) with Neon Postgres
+#
+# Database: Neon (serverless Postgres) — NOT managed on Render.
+# Hosting:  Render web service (Docker).
+#
+# Setup:
+#   1. Create a Neon project → copy the **Prisma / pooled** connection string.
+#   2. On Render, set service secrets:
+#        DATABASE_URL        = neon pooled url  (e.g. postgres://user:pass@host-pooler...:5432/db?sslmode=require)
+#        DATABASE_URL_DIRECT = neon direct url  (for prisma migrate deploy)
+#        JWT_ACCESS_SECRET, APP_ENC_KEY, CORS_ORIGINS, PUBLIC_API_BASE_URL
+#   3. Deploy → `preDeployCommand` runs migrations against the direct URL.
+#   4. Run `npx tsx prisma/seed.ts` once in the service shell.
+
+services:
+  - type: web
+    name: adshare-api
+    runtime: docker
+    repo: https://github.com/budhalokesh20/adsclick.git
+    branch: main
+    plan: free                # 0.1 CPU / 512MB; fine for a light API
+    dockerfilePath: Dockerfile
+    healthCheckPath: /health
+    preDeployCommand: npm run db:migrate:server
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: "30"
+      - key: APP_ENC_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TRUST_PROXY
+        value: "true"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: PUBLIC_API_BASE_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_DIRECT
+        sync: false
+      - key: REDIS_URL
+        value: redis://localhost:6379   # stub — set to a real Redis if you use rate limits/queues
