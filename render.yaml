@@ -49,3 +49,7 @@ services:
         sync: false
       - key: REDIS_URL
         value: redis://localhost:6379   # stub — set to a real Redis if you use rate limits/queues
+      - key: GOOGLE_CLIENT_ID
+        value: 266203917681-1lrmnhvc56m6pkst7t1ccd1edcpoqnar.apps.googleusercontent.com
+      - key: GOOGLE_CLIENT_ID_ANDROID
+        value: 266203917681-0kev0kdh6im39n73tflm0eu3u66g5ndi.apps.googleusercontent.com
