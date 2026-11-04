@@ -1,18 +1,28 @@
 import type { Request, Response } from 'express';
 import {
   forgotPassword,
+  googleLogin,
   listSessions,
   login,
   logout,
   refresh,
   register,
+  resendSignupOtp,
   resendVerification,
   resetPassword,
   revokeAllSessions,
   revokeSession,
   verifyEmail,
+  verifySignupOtp,
 } from './auth.service.js';
-import type { LoginInput, RefreshInput, RegisterInput, ResetPasswordInput } from './auth.schemas.js';
+import type {
+  GoogleAuthInput,
+  LoginInput,
+  RefreshInput,
+  RegisterInput,
+  ResetPasswordInput,
+  VerifyOtpInput,
+} from './auth.schemas.js';
 
 const metaOf = (req: { ip?: string; header(name: string): string | undefined }) => ({
   ip: req.ip,
@@ -47,6 +57,21 @@ export const authController = {
   async verifyEmail(req: Request<unknown, unknown, { token: string }>, res: Response): Promise<void> {
     const user = await verifyEmail(req.body.token);
     res.json({ user });
+  },
+
+  async verifyOtp(req: Request<unknown, unknown, VerifyOtpInput>, res: Response): Promise<void> {
+    const user = await verifySignupOtp(req.body.email, req.body.code);
+    res.json({ user });
+  },
+
+  async resendOtp(req: Request<unknown, unknown, { email: string }>, res: Response): Promise<void> {
+    await resendSignupOtp(req.body.email);
+    res.status(204).send();
+  },
+
+  async google(req: Request<unknown, unknown, GoogleAuthInput>, res: Response): Promise<void> {
+    const result = await googleLogin(req.body, metaOf(req));
+    res.json(result);
   },
 
   async resendVerification(req: Request, res: Response): Promise<void> {

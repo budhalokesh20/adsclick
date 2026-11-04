@@ -17,6 +17,8 @@ const envSchema = z.object({
   RATE_LIMIT_ENABLED: boolFromEnv.default(true),
   ADMIN_SEED_EMAIL: z.string().email().default('admin@adshare.local'),
   ADMIN_SEED_PASSWORD: z.string().min(8).default('ChangeMe123!'),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_ID_ANDROID: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

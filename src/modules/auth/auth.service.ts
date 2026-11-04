@@ -12,6 +12,8 @@ import {
 import { buildResetPasswordLink, buildVerifyEmailLink, sendEmail } from '../../utils/email.js';
 import { generateReferralCode } from '../../utils/referral.js';
 import { resolveCurrency } from '../currencies/currencies.service.js';
+import { verifyGoogleIdToken } from '../../services/google/google-auth.service.js';
+import { issueOtp, verifyOtpCode } from '../../services/otp/otp.service.js';
 import { grantReferralReward } from '../referrals/referrals.service.js';
 import { env } from '../../config/env.js';
 import type { LoginInput, RegisterInput } from './auth.schemas.js';
@@ -124,9 +126,65 @@ function toPublicUser(user: Prisma.UserGetPayload<{ include: { profile: true; re
   };
 }
 
+export async function googleLogin(
+  input: { idToken: string; deviceId: string; platform?: 'ANDROID' | 'IOS'; deviceModel?: string; osVersion?: string; appVersion?: string },
+  meta: { ip?: string; userAgent?: string },
+) {
+  const profile = await verifyGoogleIdToken(input.idToken).catch(() => {
+    throw unauthorized('INVALID_GOOGLE_TOKEN', 'Google token is invalid or expired');
+  });
+  if (!profile.emailVerified) {
+    throw unauthorized('GOOGLE_EMAIL_UNVERIFIED', 'Google account email is not verified');
+  }
+
+  const user = await prisma.$transaction(async (tx) => {
+    const existing = await tx.user.findUnique({ where: { email: profile.email }, include: { profile: true, referralCodes: true } });
+    if (existing) {
+      if (existing.status === 'CLOSED') throw unauthorized('INVALID_CREDENTIALS', 'Account is closed');
+      if (existing.status === 'SUSPENDED') throw forbidden('ACCOUNT_SUSPENDED', 'Account is suspended');
+      return tx.user.update({
+        where: { id: existing.id },
+        data: { googleSub: existing.googleSub ?? profile.sub },
+        include: { profile: true, referralCodes: true },
+      });
+    }
+
+    return tx.user.create({
+      data: {
+        email: profile.email,
+        googleSub: profile.sub,
+        passwordHash: await hashPassword(`${profile.sub}:google-oauth:${Date.now()}`),
+        status: 'ACTIVE',
+        emailVerifiedAt: new Date(),
+        profile: {
+          create: {
+            fullName: profile.name,
+            avatarUrl: profile.picture,
+          },
+        },
+        wallet: { create: {} },
+        referralCodes: { create: { code: generateReferralCode() } },
+      },
+      include: { profile: true, referralCodes: true },
+    });
+  });
+
+  const deviceId = await ensureDevice(prisma, user.id, input);
+  const session = await createSession(prisma, user.id, deviceId, meta.ip, meta.userAgent);
+  const accessToken = await signAccessToken({ userId: user.id, sessionId: session.id, deviceId: deviceId ?? undefined });
+
+  return {
+    user: toPublicUser(user),
+    accessToken,
+    refreshToken: session.refreshToken,
+    sessionId: session.id,
+    expiresAt: session.expiresAt.toISOString(),
+  };
+}
+
 export async function register(input: RegisterInput, meta: { ip?: string; userAgent?: string }) {
-  return prisma.$transaction(async (tx) => {
-    let user;
+  const { user, deviceId } = await prisma.$transaction(async (tx) => {
+    let user: Prisma.UserGetPayload<{ include: { profile: true; referralCodes: true } }>;
     try {
       user = await tx.user.create({
         data: {
@@ -168,24 +226,22 @@ export async function register(input: RegisterInput, meta: { ip?: string; userAg
     }
 
     const deviceId = await ensureDevice(tx, user.id, input);
-    const session = await createSession(tx, user.id, deviceId, meta.ip, meta.userAgent);
-
-    const verificationToken = await signEmailToken(user.id, 'email_verify');
-    await sendEmail({
-      to: user.email,
-      subject: 'Verify your AdShare email',
-      text: `Welcome! Please verify your email: ${buildVerifyEmailLink(verificationToken)}`,
-    });
-
-    const accessToken = await signAccessToken({ userId: user.id, sessionId: session.id, deviceId: deviceId ?? undefined });
-    return {
-      user: toPublicUser(user),
-      accessToken,
-      refreshToken: session.refreshToken,
-      sessionId: session.id,
-      expiresAt: session.expiresAt.toISOString(),
-    };
+    return { user, deviceId };
   });
+
+  // OTP flows (no activation email links) — outside the transaction.
+  await issueOtp(user.email, 'SIGNUP', user.id);
+
+  const session = await createSession(prisma, user.id, deviceId, meta.ip, meta.userAgent);
+  const accessToken = await signAccessToken({ userId: user.id, sessionId: session.id, deviceId: deviceId ?? undefined });
+  return {
+    user: toPublicUser(user),
+    accessToken,
+    refreshToken: session.refreshToken,
+    sessionId: session.id,
+    expiresAt: session.expiresAt.toISOString(),
+    otpRequired: true,
+  };
 }
 
 export async function login(input: LoginInput, meta: { ip?: string; userAgent?: string }) {
@@ -295,6 +351,42 @@ export async function logout(sessionId: string, userId: string): Promise<void> {
     where: { id: sessionId, userId, revokedAt: null },
     data: { revokedAt: new Date() },
   });
+}
+
+export async function verifySignupOtp(email: string, code: string) {
+  await verifyOtpCode(email, code, 'SIGNUP');
+
+  const user = await prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { email: email.toLowerCase() },
+      data: { emailVerifiedAt: new Date(), status: 'ACTIVE' },
+      include: { profile: true, referralCodes: true },
+    });
+    await tx.referralRelationship.updateMany({
+      where: { referredUserId: updated.id, status: 'PENDING' },
+      data: { status: 'CONFIRMED', confirmedAt: new Date() },
+    });
+    return updated;
+  });
+
+  // Pay signup referral bonuses (no-op when set to 0).
+  const rels = await prisma.referralRelationship.findMany({
+    where: { referredUserId: user.id, status: 'CONFIRMED' },
+    select: { id: true },
+  });
+  await Promise.all(rels.map((r) => grantReferralReward(r.id, 'SIGNUP_BONUS')));
+
+  return toPublicUser(user);
+}
+
+export async function resendSignupOtp(email: string): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { email: email.toLowerCase() },
+    select: { id: true, email: true, emailVerifiedAt: true },
+  });
+  if (!user) throw badRequest('USER_NOT_FOUND', 'No account found with this email');
+  if (user.emailVerifiedAt) throw badRequest('ALREADY_VERIFIED', 'Email is already verified');
+  await issueOtp(user.email, 'SIGNUP', user.id);
 }
 
 export async function verifyEmail(token: string): Promise<PublicUser> {

@@ -37,6 +37,24 @@ export const resetPasswordSchema = z.object({
   newPassword: z.string().min(8).max(72),
 });
 
+export const verifyOtpSchema = z.object({
+  email: z.string().email().max(254),
+  code: z.string().regex(/^\d{6}$/),
+});
+
+export const resendOtpSchema = z.object({
+  email: z.string().email().max(254),
+});
+
+export const googleAuthSchema = z.object({
+  idToken: z.string().min(20),
+  deviceId: z.string().min(8).max(200),
+  platform: z.enum(['ANDROID', 'IOS']).default('ANDROID'),
+  deviceModel: z.string().max(100).optional(),
+  osVersion: z.string().max(40).optional(),
+  appVersion: z.string().max(40).optional(),
+});
+
 export const verifyEmailSchema = z.object({
   token: z.string().min(1),
 });
@@ -49,3 +67,5 @@ export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RefreshInput = z.infer<typeof refreshSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;
+export type GoogleAuthInput = z.infer<typeof googleAuthSchema>;

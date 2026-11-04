@@ -42,6 +42,37 @@ describe('auth flow', () => {
     sessionId = res.body.sessionId;
   });
 
+  it('signup issues OTP (not activation link) and verifies it', async () => {
+    const email = 'otp-user@example.com';
+    const reg = await request(app).post('/api/v1/auth/register').send({ email, password, deviceId: 'dev-otp-001' });
+    expect(reg.status).toBe(201);
+    expect(reg.body.otpRequired).toBe(true);
+
+    const otp = await prisma.emailOtp.findFirst({ where: { email, purpose: 'SIGNUP', usedAt: null } });
+    expect(otp).not.toBeNull();
+
+    // Wrong code rejected
+    const wrong = await request(app).post('/api/v1/auth/verify-otp').send({ email, code: '000000' });
+    expect(wrong.status).toBe(400);
+    expect(wrong.body.error.code).toBe('INVALID_OTP');
+
+    // Correct code → verified. Need the actual code: hash is deterministic from email+code, so compute it.
+    const { createHash } = await import('node:crypto');
+    for (let code = 100000; code <= 999999; code++) {
+      const hash = createHash('sha256').update(`${email}:${code}`).digest('hex');
+      if (hash === otp!.codeHash) {
+        const ok = await request(app).post('/api/v1/auth/verify-otp').send({ email, code: String(code) });
+        expect(ok.status).toBe(200);
+        expect(ok.body.user.emailVerified).toBe(true);
+        expect(ok.body.user.status).toBe('ACTIVE');
+        break;
+      }
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    expect(user!.emailVerifiedAt).not.toBeNull();
+  });
+
   it('rejects duplicate email', async () => {
     const res = await request(app).post('/api/v1/auth/register').send({ email, password });
     expect(res.status).toBe(409);
