@@ -55,6 +55,13 @@ export async function adminLogin(email: string, password: string) {
     .setExpirationTime('2h')
     .sign(key());
 
+  const refreshToken = await new SignJWT({ purpose: 'admin_refresh' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(admin.id)
+    .setIssuedAt()
+    .setExpirationTime('30d')
+    .sign(key());
+
   await prisma.adminUser.update({
     where: { id: admin.id },
     data: { lastLoginAt: new Date() },
@@ -62,9 +69,50 @@ export async function adminLogin(email: string, password: string) {
 
   return {
     accessToken: token,
+    refreshToken,
     admin: { id: admin.id, email: admin.email, name: admin.name, roles },
     expiresIn: 7200,
   };
+}
+
+export async function adminRefresh(refreshToken: string) {
+  let payload: { sub?: string; purpose?: string };
+  try {
+    const verified = await jwtVerify(refreshToken, key());
+    payload = verified.payload as { sub?: string; purpose?: string };
+  } catch {
+    throw unauthorized('INVALID_ADMIN_REFRESH', 'Refresh token invalid or expired');
+  }
+  if (payload.purpose !== 'admin_refresh' || !payload.sub) {
+    throw unauthorized('INVALID_ADMIN_REFRESH', 'Refresh token invalid or expired');
+  }
+
+  const admin = await prisma.adminUser.findUnique({
+    where: { id: payload.sub },
+    select: { id: true, status: true },
+  });
+  if (!admin || admin.status !== 'ACTIVE') {
+    throw unauthorized('INVALID_ADMIN_REFRESH', 'Admin account unavailable');
+  }
+
+  const claims = await loadAdmin(admin.id);
+  if (!claims) throw unauthorized('INVALID_ADMIN_REFRESH', 'Admin account unavailable');
+
+  const accessToken = await new SignJWT({ roles: claims.roles, permissions: claims.permissions })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(admin.id)
+    .setIssuedAt()
+    .setExpirationTime('2h')
+    .sign(key());
+
+  const newRefresh = await new SignJWT({ purpose: 'admin_refresh' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(admin.id)
+    .setIssuedAt()
+    .setExpirationTime('30d')
+    .sign(key());
+
+  return { accessToken, refreshToken: newRefresh, expiresIn: 7200 };
 }
 
 export async function verifyAdminToken(token: string): Promise<AdminClaims | null> {

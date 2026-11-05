@@ -29,7 +29,7 @@ import {
   updateProvider,
   updateUserProfile,
 } from './admin.service.js';
-import { adminLogin } from './admin.auth.service.js';
+import { adminLogin, adminRefresh } from './admin.auth.service.js';
 
 const cursorOf = (req: Request) => (typeof req.query.cursor === 'string' ? req.query.cursor : undefined);
 const limitOf = (req: Request) => Math.min(typeof req.query.limit === 'string' ? Number(req.query.limit) : 20, 100);
@@ -43,6 +43,11 @@ export const adminController = {
 
   async me(req: Request, res: Response): Promise<void> {
     res.json(req.admin);
+  },
+
+  async refresh(req: Request, res: Response): Promise<void> {
+    const body = z.object({ refreshToken: z.string().min(20) }).parse(req.body);
+    res.json(await adminRefresh(body.refreshToken));
   },
 
   async updateOwnProfile(req: Request, res: Response): Promise<void> {

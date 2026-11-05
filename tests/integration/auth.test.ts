@@ -56,18 +56,16 @@ describe('auth flow', () => {
     expect(wrong.status).toBe(400);
     expect(wrong.body.error.code).toBe('INVALID_OTP');
 
-    // Correct code → verified. Need the actual code: hash is deterministic from email+code, so compute it.
+    // Replace with a known code so verification is deterministic/fast.
     const { createHash } = await import('node:crypto');
-    for (let code = 100000; code <= 999999; code++) {
-      const hash = createHash('sha256').update(`${email}:${code}`).digest('hex');
-      if (hash === otp!.codeHash) {
-        const ok = await request(app).post('/api/v1/auth/verify-otp').send({ email, code: String(code) });
-        expect(ok.status).toBe(200);
-        expect(ok.body.user.emailVerified).toBe(true);
-        expect(ok.body.user.status).toBe('ACTIVE');
-        break;
-      }
-    }
+    const knownCode = '123456';
+    const knownHash = createHash('sha256').update(`${email}:${knownCode}`).digest('hex');
+    await prisma.emailOtp.update({ where: { id: otp!.id }, data: { codeHash: knownHash, attempts: 0 } });
+
+    const ok = await request(app).post('/api/v1/auth/verify-otp').send({ email, code: knownCode });
+    expect(ok.status).toBe(200);
+    expect(ok.body.user.emailVerified).toBe(true);
+    expect(ok.body.user.status).toBe('ACTIVE');
 
     const user = await prisma.user.findUnique({ where: { email } });
     expect(user!.emailVerifiedAt).not.toBeNull();

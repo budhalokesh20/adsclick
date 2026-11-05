@@ -106,6 +106,22 @@ describe('admin API', () => {
     expect(me.body.roles).toContain('SUPER_ADMIN');
   });
 
+  it('admin refresh token issues a new access token', async () => {
+    const login = await request(app).post('/api/v1/admin/auth/login').send({ email: 'boss@admin.test', password });
+    expect(login.status).toBe(200);
+    expect(login.body.refreshToken).toBeDefined();
+
+    const refresh = await request(app).post('/api/v1/admin/auth/refresh').send({ refreshToken: login.body.refreshToken });
+    expect(refresh.status).toBe(200);
+    expect(refresh.body.accessToken).toBeDefined();
+
+    const me = await request(app).get('/api/v1/admin/auth/me').set(auth(refresh.body.accessToken));
+    expect(me.status).toBe(200);
+
+    const bad = await request(app).post('/api/v1/admin/auth/refresh').send({ refreshToken: 'junk'.repeat(10) });
+    expect(bad.status).toBe(401);
+  });
+
   it('admin can update own profile and change password', async () => {
     const profile = await request(app)
       .patch('/api/v1/admin/auth/me')
