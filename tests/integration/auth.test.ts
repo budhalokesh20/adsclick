@@ -139,9 +139,21 @@ describe('auth flow', () => {
     expect(res.status).toBe(400);
   });
 
-  it('resets password via signed token and revokes sessions', async () => {
-    const token = await signEmailToken(userId, 'password_reset');
-    const res = await request(app).post('/api/v1/auth/reset-password').send({ token, newPassword: NEW_PASSWORD });
+  it('resets password via OTP and revokes sessions', async () => {
+    const forgot = await request(app).post('/api/v1/auth/forgot-password').send({ email });
+    expect(forgot.status).toBe(204);
+
+    const otp = await prisma.emailOtp.findFirst({ where: { email, purpose: 'PASSWORD_RESET', usedAt: null } });
+    expect(otp).not.toBeNull();
+
+    const { createHash } = await import('node:crypto');
+    let otpCode = '';
+    for (let code = 100000; code <= 999999; code++) {
+      const hash = createHash('sha256').update(`${email}:${code}`).digest('hex');
+      if (hash === otp!.codeHash) { otpCode = String(code); break; }
+    }
+
+    const res = await request(app).post('/api/v1/auth/reset-password').send({ email, code: otpCode, newPassword: NEW_PASSWORD });
     expect(res.status).toBe(204);
 
     // Old session wiped: previous access token still structurally valid until expiry,

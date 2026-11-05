@@ -130,7 +130,10 @@ export async function googleLogin(
   input: { idToken: string; deviceId: string; platform?: 'ANDROID' | 'IOS'; deviceModel?: string; osVersion?: string; appVersion?: string },
   meta: { ip?: string; userAgent?: string },
 ) {
-  const profile = await verifyGoogleIdToken(input.idToken).catch(() => {
+  const profile = await verifyGoogleIdToken(input.idToken).catch((err: Error) => {
+    if (err.message.includes('GOOGLE_CLIENT_ID')) {
+      throw new Error('GOOGLE_CLIENT_ID not configured on server');
+    }
     throw unauthorized('INVALID_GOOGLE_TOKEN', 'Google token is invalid or expired');
   });
   if (!profile.emailVerified) {
@@ -440,31 +443,24 @@ export async function resendVerification(userId: string): Promise<void> {
 export async function forgotPassword(email: string): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
-    select: { id: true, deletedAt: true, status: true },
+    select: { id: true, email: true, deletedAt: true, status: true },
   });
   // Always respond 200 to avoid account enumeration.
   if (!user || user.deletedAt || user.status === 'CLOSED') return;
 
-  const token = await signEmailToken(user.id, 'password_reset');
-  await sendEmail({
-    to: email.toLowerCase(),
-    subject: 'Reset your AdShare password',
-    text: `Reset your password: ${buildResetPasswordLink(token)}`,
-  });
+  await issueOtp(user.email, 'PASSWORD_RESET', user.id);
 }
 
-export async function resetPassword(token: string, newPassword: string): Promise<void> {
-  const userId = await verifyEmailToken(token, 'password_reset').catch(() => {
-    throw badRequest('INVALID_TOKEN', 'Reset token is invalid or expired');
-  });
+export async function resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+  await verifyOtpCode(email, code, 'PASSWORD_RESET');
 
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
-      where: { id: userId },
+      where: { email: email.toLowerCase() },
       data: { passwordHash: await hashPassword(newPassword) },
     });
     await tx.userSession.updateMany({
-      where: { userId, revokedAt: null },
+      where: { user: { email: email.toLowerCase() }, revokedAt: null },
       data: { revokedAt: new Date() },
     });
   });

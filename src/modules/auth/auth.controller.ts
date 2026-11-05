@@ -89,7 +89,7 @@ export const authController = {
   },
 
   async resetPassword(req: Request<unknown, unknown, ResetPasswordInput>, res: Response): Promise<void> {
-    await resetPassword(req.body.token, req.body.newPassword);
+    await resetPassword(req.body.email, req.body.code, req.body.newPassword);
     res.status(204).send();
   },
 
