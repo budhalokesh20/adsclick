@@ -168,6 +168,19 @@ describe('admin API', () => {
     expect(patch.body.countryCode).toBe('US');
   });
 
+  it('admin can delete a user (soft-close + revoke sessions)', async () => {
+    const reg = await request(app).post('/api/v1/auth/register').send({ email: 'delete-me@example.com', password });
+    const victimId = reg.body.user.id as string;
+    const victimToken = reg.body.accessToken as string;
+
+    const del = await request(app).delete(`/api/v1/admin/users/${victimId}`).set(auth(superToken));
+    expect(del.status).toBe(200);
+    expect(del.body.to).toBe('CLOSED');
+
+    const victimProbe = await request(app).get('/api/v1/users/me').set({ Authorization: `Bearer ${victimToken}` });
+    expect(victimProbe.status).toBe(401);
+  });
+
   it('admin can create a user who can log in', async () => {
     const res = await request(app)
       .post('/api/v1/admin/users')

@@ -31,6 +31,7 @@ adminRouter.post('/users', requireAdmin(['users.manage']), adminController.creat
 adminRouter.get('/users/:id', requireAdmin(['users.read']), adminController.userDetail);
 adminRouter.patch('/users/:id', requireAdmin(['users.manage']), adminController.updateUser);
 adminRouter.patch('/users/:id/status', requireAdmin(['users.manage']), body(z.object({ status: z.string() })), adminController.userStatus);
+adminRouter.delete('/users/:id', requireAdmin(['users.manage']), adminController.deleteUser);
 
 // Providers & campaigns — finance+
 adminRouter.get('/providers', requireAdmin(['finance.read']), adminController.providers);

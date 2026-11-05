@@ -278,6 +278,22 @@ export async function createUser(input: { email: string; password: string; fullN
   }
 }
 
+export async function deleteUser(userId: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
+  if (!user) throw notFound('User not found');
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: { deletedAt: new Date(), status: 'CLOSED' },
+    });
+    await tx.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    await tx.userEarningState.updateMany({ where: { userId }, data: { status: 'DISABLED' } });
+  });
+
+  return { id: userId, from: user.status, to: 'CLOSED' };
+}
+
 export async function updateUserProfile(userId: string, input: { fullName?: string | null; countryCode?: string | null; locale?: string | null }) {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
   if (!user) throw notFound('User not found');

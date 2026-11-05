@@ -11,6 +11,7 @@ import {
   createPayoutMethod,
   createProvider,
   createUser,
+  deleteUser,
   financeSummary,
   getUserDetail,
   listCampaigns,
@@ -171,6 +172,12 @@ export const adminController = {
     }).parse(req.body);
     const result = await updateUserProfile(req.params.id, body);
     await audit(req, 'users.update', 'users', req.params.id, null, body);
+    res.json(result);
+  },
+
+  async deleteUser(req: Request<{ id: string }>, res: Response): Promise<void> {
+    const result = await deleteUser(req.params.id);
+    await audit(req, 'users.delete', 'users', req.params.id, { status: result.from }, { status: 'CLOSED' });
     res.json(result);
   },
 
