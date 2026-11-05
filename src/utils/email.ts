@@ -1,11 +1,7 @@
+import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from '../config/env.js';
 import { logger } from './logger.js';
 
-/**
- * Email delivery stub. In development we log the message (including tokenized
- * URLs) so flows can be exercised end-to-end. Swap `send` with a real SMTP /
- * transactional provider in production — the interface stays the same.
- */
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -13,13 +9,43 @@ export interface EmailMessage {
   html?: string;
 }
 
+let transporter: Transporter | null = null;
+
+function getTransporter(): Transporter | null {
+  if (transporter) return transporter;
+  if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
+    return null;
+  }
+  transporter = nodemailer.createTransport({
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    secure: env.SMTP_SECURE,
+    auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+  });
+  return transporter;
+}
+
 export async function sendEmail(message: EmailMessage): Promise<void> {
-  if (env.NODE_ENV === 'production') {
-    // TODO(phase 9): wire real mail transport (SMTP / provider).
-    logger.warn({ to: message.to, subject: message.subject }, 'email not delivered (stub)');
+  const t = getTransporter();
+
+  if (!t) {
+    // No SMTP configured → log (dev) or warn (prod) so OTP flows still work
+    // in development. Production should always have SMTP set.
+    if (env.NODE_ENV === 'production') {
+      logger.error({ to: message.to, subject: message.subject }, 'SMTP not configured — email not sent');
+    } else {
+      logger.info({ to: message.to, subject: message.subject, text: message.text }, 'email stub (no SMTP)');
+    }
     return;
   }
-  logger.info({ to: message.to, subject: message.subject, text: message.text }, 'email stub');
+
+  await t.sendMail({
+    from: env.SMTP_FROM,
+    to: message.to,
+    subject: message.subject,
+    text: message.text,
+    html: message.html,
+  });
 }
 
 export function buildVerifyEmailLink(token: string): string {

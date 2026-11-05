@@ -53,3 +53,15 @@ services:
         value: 266203917681-1lrmnhvc56m6pkst7t1ccd1edcpoqnar.apps.googleusercontent.com
       - key: GOOGLE_CLIENT_ID_ANDROID
         value: 266203917681-0kev0kdh6im39n73tflm0eu3u66g5ndi.apps.googleusercontent.com
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        value: info.naulotechnology@gmail.com
+      - key: SMTP_PASS
+        sync: false    # set as a private secret on Render (Gmail app password)
+      - key: SMTP_FROM
+        value: info.naulotechnology@gmail.com
